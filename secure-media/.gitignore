@@ -1,0 +1,29 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts.map
+
+# Dev keys — never commit
+dev/keys/
+dev/certs/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Test coverage
+coverage/
+
+# SQLite dev DB
+dev/example-app/*.db
+dev/example-app/*.db-shm
+dev/example-app/*.db-wal

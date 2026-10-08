@@ -1,0 +1,39 @@
+{
+  "name": "@secure-media/client",
+  "version": "0.1.0",
+  "description": "Client-side secure video streaming library — Shaka Player wrapper, React component",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "shaka-player": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "vitest": "^1.6.0",
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.0",
+    "jsdom": "^24.1.0",
+    "@vitest/browser": "^1.6.0"
+  },
+  "peerDependencies": {
+    "react": "^18.x",
+    "react-dom": "^18.x"
+  }
+}

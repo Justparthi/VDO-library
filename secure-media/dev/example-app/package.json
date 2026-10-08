@@ -1,0 +1,18 @@
+{
+  "name": "example-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=../../.env --watch server.mjs",
+    "start": "node --env-file=../../.env server.mjs"
+  },
+  "dependencies": {
+    "@secure-media/server": "*",
+    "sql.js": "^1.12.0",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  },
+  "devDependencies": {
+    "@types/express-session": "^1.18.0"
+  }
+}

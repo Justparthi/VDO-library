@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Secure Media — Local Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    video { width: 100%; background: #000; }
+    pre { background: #f4f4f4; padding: 0.5rem; border-radius: 4px; white-space: pre-wrap; font-size: 0.85rem; }
+    button { cursor: pointer; padding: 0.4rem 0.9rem; margin: 0.25rem; }
+    input[type=text], input[type=file] { padding: 0.35rem; margin: 0.25rem 0; width: 100%; box-sizing: border-box; }
+    .status { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+    .error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>🎬 Secure Media — Local Test Page</h1>
+
+  <!-- ── Auth ──────────────────────────────────────────────────────────── -->
+  <section>
+    <h2>1. Auth</h2>
+    <div>
+      Current user: <strong id="me">—</strong>
+      &nbsp;
+      <button onclick="login('alice')">Login as Alice (all videos)</button>
+      <button onclick="login('bob')">Login as Bob (unprotected only)</button>
+      <button onclick="logout()">Logout</button>
+    </div>
+  </section>
+
+  <!-- ── Upload ────────────────────────────────────────────────────────── -->
+  <section>
+    <h2>2. Upload</h2>
+    <label><input type="checkbox" id="protected" checked /> Protected video</label><br/>
+    <input type="file" id="file" accept="video/mp4" />
+    <button onclick="upload()">Upload</button>
+    <div class="status" id="upload-status"></div>
+    <div>Media ID: <strong id="media-id">—</strong></div>
+  </section>
+
+  <!-- ── Play ──────────────────────────────────────────────────────────── -->
+  <section>
+    <h2>3. Play</h2>
+    <input type="text" id="play-id" placeholder="Paste media ID here" />
+    <button onclick="play()">Play</button>
+    <div class="status" id="play-status"></div>
+    <video id="video" controls></video>
+  </section>
+
+  <!-- ── Log ───────────────────────────────────────────────────────────── -->
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <script type="module">
+    // ── Shaka is loaded from the CDN for simplicity in this test page ──
+    // In a real app you'd bundle it.
+    const SHAKA_CDN = 'https://ajax.googleapis.com/ajax/libs/shaka-player/4.7.0/shaka-player.compiled.js';
+    const shakaScript = document.createElement('script');
+    shakaScript.src = SHAKA_CDN;
+    document.head.appendChild(shakaScript);
+
+    const API = '/api/media';
+    const CDN_ORIGIN = `https://${location.hostname.replace('local.', 'cdn.')}`;
+
+    let currentPlayer = null;
+
+    function log(msg) {
+      const el = document.getElementById('log');
+      el.textContent = `[${new Date().toISOString()}] ${msg}\n` + el.textContent;
+    }
+
+    // ── Me ─────────────────────────────────────────────────────────────
+    async function fetchMe() {
+      const r = await fetch('/me', { credentials: 'include' });
+      const d = await r.json();
+      document.getElementById('me').textContent = d.userId ?? '(not logged in)';
+    }
+    fetchMe();
+
+    window.login = async (username) => {
+      await fetch('/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      await fetchMe();
+      log(`Logged in as ${username}`);
+    };
+
+    window.logout = async () => {
+      await fetch('/logout', { method: 'POST', credentials: 'include' });
+      await fetchMe();
+      log('Logged out');
+    };
+
+    // ── Upload ─────────────────────────────────────────────────────────
+    window.upload = async () => {
+      const file = document.getElementById('file').files[0];
+      if (!file) { alert('Pick a file first'); return; }
+      const isProtected = document.getElementById('protected').checked;
+
+      const statusEl = document.getElementById('upload-status');
+      statusEl.textContent = 'Creating record…';
+
+      const createRes = await fetch(API, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protected: isProtected }),
+      });
+      if (!createRes.ok) {
+        statusEl.textContent = `Error: ${createRes.status}`;
+        return;
+      }
+      const { id, uploadUrl } = await createRes.json();
+      document.getElementById('media-id').textContent = id;
+      document.getElementById('play-id').value = id;
+
+      statusEl.textContent = `Uploading to S3… (id: ${id})`;
+      log(`Upload started: ${id}`);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('Content-Type', 'video/mp4');
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          statusEl.textContent = `Uploading ${Math.round(e.loaded / e.total * 100)}%`;
+        }
+      });
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          statusEl.textContent = '✅ Uploaded. Now encode it with encode.sh, then click Play.';
+          log(`Upload complete: ${id}`);
+        } else {
+          statusEl.textContent = `S3 error: ${xhr.status}`;
+        }
+      });
+      xhr.send(file);
+    };
+
+    // ── Play ───────────────────────────────────────────────────────────
+    window.play = async () => {
+      const id = document.getElementById('play-id').value.trim();
+      if (!id) { alert('Enter a media ID'); return; }
+
+      if (currentPlayer) {
+        currentPlayer.destroy();
+        currentPlayer = null;
+      }
+
+      const statusEl = document.getElementById('play-status');
+      const videoEl  = document.getElementById('video');
+
+      await shakaScript.onload; // wait for Shaka if still loading
+      shaka.polyfill.installAll();
+      if (!shaka.Player.isBrowserSupported()) {
+        statusEl.textContent = '❌ Browser not supported';
+        return;
+      }
+
+      const player = new shaka.Player(videoEl);
+      currentPlayer = { destroy: () => player.destroy() };
+
+      // Allow credentials for CDN origin
+      player.getNetworkingEngine().registerRequestFilter((_type, req) => {
+        if (req.uris[0]?.startsWith(CDN_ORIGIN)) {
+          req.allowCrossSiteCredentials = true;
+        }
+      });
+
+      async function fetchPlayback() {
+        const r = await fetch(`${API}/${id}/playback`, { credentials: 'include' });
+        if (r.status === 202) return { status: 'processing' };
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.json();
+      }
+
+      let expiresAt = null;
+      let refreshTimer = null;
+
+      function scheduleRefresh(exp) {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        const delay = Math.max(0, (exp - Date.now()) * 0.8);
+        refreshTimer = setTimeout(async () => {
+          try {
+            const d = await fetchPlayback();
+            if (d.expiresAt) { expiresAt = d.expiresAt; scheduleRefresh(d.expiresAt); }
+            log('Cookies refreshed');
+          } catch { log('Cookie refresh failed — access may have been revoked'); }
+        }, delay);
+      }
+
+      statusEl.textContent = 'Loading…';
+      log(`Play: ${id}`);
+
+      const deadline = Date.now() + 10 * 60 * 1000;
+      while (true) {
+        let data;
+        try { data = await fetchPlayback(); }
+        catch (e) { statusEl.innerHTML = `<span class="error">Error: ${e.message}</span>`; log(`Playback error: ${e.message}`); return; }
+
+        if (data.status === 'processing') {
+          statusEl.textContent = '⏳ Processing… polling every 4s';
+          log('Still processing…');
+          if (Date.now() > deadline) { statusEl.textContent = '❌ Timed out'; return; }
+          await new Promise(r => setTimeout(r, 4000));
+          continue;
+        }
+
+        expiresAt = data.expiresAt;
+        scheduleRefresh(expiresAt);
+
+        try {
+          await player.load(data.manifestUrl);
+          statusEl.textContent = `✅ Playing (cookies expire ${new Date(expiresAt).toLocaleTimeString()})`;
+          log(`Playing: ${data.manifestUrl}`);
+        } catch (e) {
+          statusEl.innerHTML = `<span class="error">Shaka error: ${e.message}</span>`;
+          log(`Shaka load error: ${e.message}`);
+        }
+        break;
+      }
+
+      player.addEventListener('error', async (event) => {
+        const err = event.detail;
+        if (err.code === 1001 /* BAD_HTTP_STATUS */ && err.data?.[1] === 403) {
+          log('403 on segment — refreshing cookies and retrying');
+          try {
+            const d = await fetchPlayback();
+            if (d.expiresAt) scheduleRefresh(d.expiresAt);
+            player.retryStreaming();
+          } catch { statusEl.innerHTML = '<span class="error">Access revoked</span>'; }
+        }
+      });
+    };
+  </script>
+</body>
+</html>

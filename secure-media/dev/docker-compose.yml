@@ -1,0 +1,75 @@
+services:
+  # ── SeaweedFS master ──────────────────────────────────────────────────────
+  seaweed-master:
+    image: chrislusf/seaweedfs:latest
+    command: master -volumeSizeLimitMB=512
+    ports:
+      - "9333:9333"
+    networks:
+      - media-net
+
+  # ── SeaweedFS volume ──────────────────────────────────────────────────────
+  seaweed-volume:
+    image: chrislusf/seaweedfs:latest
+    command: volume -mserver=seaweed-master:9333 -port=8080 -dir=/data
+    depends_on:
+      - seaweed-master
+    volumes:
+      - seaweed-data:/data
+    networks:
+      - media-net
+
+  # ── SeaweedFS S3 gateway ──────────────────────────────────────────────────
+  # This is the endpoint we point at: http://localhost:8333
+  seaweed-s3:
+    image: chrislusf/seaweedfs:latest
+    command: >
+      s3
+      -port=8333
+      -filer=seaweed-filer:8888
+      -config=/etc/seaweedfs/s3.json
+    ports:
+      - "8333:8333"
+    depends_on:
+      - seaweed-filer
+    volumes:
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    networks:
+      - media-net
+
+  # ── SeaweedFS filer (required for S3 gateway) ─────────────────────────────
+  seaweed-filer:
+    image: chrislusf/seaweedfs:latest
+    command: filer -master=seaweed-master:9333
+    depends_on:
+      - seaweed-master
+    networks:
+      - media-net
+
+  # ── Bucket initialiser (runs once, then exits) ────────────────────────────
+  # Creates the "source" and "output" buckets via the AWS CLI pointed at SeaweedFS.
+  bucket-init:
+    image: amazon/aws-cli:latest
+    environment:
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for S3 gateway...';
+        until aws --endpoint-url http://seaweed-s3:8333 s3 ls 2>/dev/null; do sleep 2; done;
+        echo 'Creating buckets...';
+        aws --endpoint-url http://seaweed-s3:8333 s3 mb s3://source 2>/dev/null || true;
+        aws --endpoint-url http://seaweed-s3:8333 s3 mb s3://output 2>/dev/null || true;
+        echo 'Buckets ready.';
+      "
+    depends_on:
+      - seaweed-s3
+    networks:
+      - media-net
+
+volumes:
+  seaweed-data:
+
+networks:
+  media-net:
